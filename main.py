@@ -38,7 +38,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # اعتبار توکن: ۷ روز
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")  # نام کاربری مدیر سامانه
+
 # --- تنظیمات SQLAlchemy و دیتابیس ---
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -241,7 +242,6 @@ def calculate_area_and_centroid(df: pd.DataFrame, zone: int = 39):
     transformer = Transformer.from_crs(f"epsg:326{zone}", "epsg:4326")
     lat, lon = transformer.transform(cx, cy)
     
-    # خروجی‌ها کاملاً به float پایتون تبدیل می‌شوند
     return float(cx), float(cy), float(lat), float(lon), float(abs_area)
 
 def copy_style(source_cell, target_cell):
@@ -300,7 +300,7 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(new_user)
 
-        # ارسال اعلان ثبت نام کاربر جدید به مدیر
+        # ارسال اعلان ثبت نام کاربر جدید به مدیر در تلگرام
         admin_msg = (
             f"👤 <b>ثبت‌نام کاربر جدید در سامانه!</b>\n\n"
             f"🔹 نام کاربری: <code>{new_user.username}</code>\n"
@@ -323,7 +323,14 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="نام کاربری یا رمز عبور اشتباه است.")
         
         access_token = create_access_token(data={"sub": user.username})
-        return {"access_token": access_token, "token_type": "bearer"}
+        # مشخص کردن دسترسی مدیر بودن
+        is_admin = (user.username.lower() == ADMIN_USERNAME.lower())
+        
+        return {
+            "access_token": access_token, 
+            "token_type": "bearer",
+            "is_admin": is_admin
+        }
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -423,7 +430,7 @@ async def process_cadastre(
             print(f"⚠️ اشکال غیربحرانی دیتابیس (خروجی متوقف نشد): {db_err}")
             db.rollback()
 
-        # ۵. ارسال اعلان صدور نقشه به مدیر
+        # ۵. ارسال اعلان صدور نقشه به مدیر در تلگرام
         admin_msg = (
             f"📜 <b>صدور گواهی کاداستر جدید!</b>\n\n"
             f"👤 صادرکننده: <code>{current_user.username}</code> ({current_user.full_name or '---'})\n"
@@ -454,3 +461,71 @@ async def process_cadastre(
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+# --- مسیر دریافت گزارش‌های مدیریتی (مخصوص وب) ---
+@app.get("/admin/reports")
+async def get_admin_reports(
+    current_user: UserDB = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 🔒 بررسی دسترسی: فقط اگر نام کاربری با ADMIN_USERNAME برابر باشد اجازه دارد
+    if current_user.username.lower() != ADMIN_USERNAME.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="دستور غیرمجاز! فقط مدیر سامانه به این بخش دسترسی دارد."
+        )
+
+    try:
+        # ۱. دریافت لیست تمام کاربران
+        users = db.query(UserDB).order_by(UserDB.created_at.desc()).all()
+        users_list = [
+            {
+                "id": u.id,
+                "username": u.username,
+                "full_name": u.full_name or "---",
+                "created_at": u.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            for u in users
+        ]
+
+        # ۲. دریافت لیست تمام گواهی‌های صادر شده همراه مشخصات صادرکننده
+        certs = db.query(
+            CertificateDB.id,
+            CertificateDB.applicant_name,
+            CertificateDB.national_id,
+            CertificateDB.total_area,
+            CertificateDB.zone,
+            CertificateDB.created_at,
+            UserDB.username,
+            UserDB.full_name
+        ).join(UserDB, CertificateDB.user_id == UserDB.id).order_by(CertificateDB.created_at.desc()).all()
+
+        certs_list = [
+            {
+                "id": c.id,
+                "applicant_name": c.applicant_name,
+                "national_id": c.national_id,
+                "total_area": round(float(c.total_area), 2) if c.total_area else 0.0,
+                "zone": c.zone,
+                "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "issued_by_username": c.username,
+                "issued_by_fullname": c.full_name or "---"
+            }
+            for c in certs
+        ]
+
+        # ۳. محاسبه مجموع مساحت‌های پردازش‌شده
+        total_area_sum = sum(c["total_area"] for c in certs_list) if certs_list else 0.0
+
+        return {
+            "success": True,
+            "summary": {
+                "total_users": len(users_list),
+                "total_certificates": len(certs_list),
+                "total_area_sqm": round(total_area_sum, 2)
+            },
+            "users": users_list,
+            "certificates": certs_list
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"خطا در دریافت گزارش‌ها: {str(e)}")
