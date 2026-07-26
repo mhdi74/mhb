@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 import io
 import re
 import math
@@ -23,7 +25,6 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Float, Text, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-from passlib.context import CryptContext
 from jose import JWTError, jwt
 
 # --- تنظیمات متغیرهای محیطی ---
