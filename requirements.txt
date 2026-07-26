@@ -8,5 +8,5 @@ requests
 pydantic
 sqlalchemy
 psycopg2-binary
-passlib[bcrypt]
+passlib
 python-jose[cryptography]
