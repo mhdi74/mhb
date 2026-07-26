@@ -67,6 +67,7 @@ class CertificateDB(Base):
 # ساخت اتوماتیک جداول در دیتابیس
 Base.metadata.create_all(bind=engine)
 
+# --- تنظیمات امنیت و هشینگ استاندارد پایتون (بدون نیاز به کتابخانه جانبی) ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 def get_password_hash(password: str) -> str:
