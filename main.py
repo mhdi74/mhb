@@ -226,7 +226,11 @@ def calculate_area_and_centroid(df: pd.DataFrame, zone: int = 39):
     transformer = Transformer.from_crs(f"epsg:326{zone}", "epsg:4326")
     lat, lon = transformer.transform(cx, cy)
     
-    return cx, cy, lat, lon, abs_area
+    # ❌ خط قبلی:
+    # return cx, cy, lat, lon, abs_area
+
+    # ✅ خط جدید و اصلاح شده:
+    return float(cx), float(cy), float(lat), float(lon), float(abs_area)
 
 def copy_style(source_cell, target_cell):
     if source_cell.has_style:
@@ -376,13 +380,13 @@ async def process_cadastre(
         wb2.save(output2)
         bytes2 = output2.getvalue()
 
-        # ۴. ذخیره لاگ پردازش در دیتابیس Supabase
+        # ✅ اصلاح ساخت رکورد در دیتابیس:
         cert_record = CertificateDB(
             user_id=current_user.id,
             applicant_name=req.applicant_name,
             national_id=req.national_id,
-            total_area=total_area,
-            zone=req.zone,
+            total_area=float(total_area),  # کست به float پایتون
+            zone=int(req.zone),
             coords_text=req.coords_text
         )
         db.add(cert_record)
