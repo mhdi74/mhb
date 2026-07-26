@@ -1,10 +1,10 @@
-import hashlib
-import secrets
 import io
 import re
 import math
 import base64
 import os
+import hashlib
+import secrets
 from copy import copy
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -21,7 +21,7 @@ from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# کتابخانه‌های دیتابیس و امنیت
+# کتابخانه‌های دیتابیس
 from sqlalchemy import create_engine, Column, Integer, String, Float, Text, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -36,7 +36,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "cadastre_super_secret_key_123456789")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # اعتبار توکن: ۷ روز
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
 
 # --- تنظیمات SQLAlchemy و دیتابیس ---
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -67,7 +68,7 @@ class CertificateDB(Base):
 # ساخت اتوماتیک جداول در دیتابیس
 Base.metadata.create_all(bind=engine)
 
-# --- تنظیمات امنیت و هشینگ استاندارد پایتون (بدون نیاز به کتابخانه جانبی) ---
+# --- تنظیمات امنیت و هشینگ استاندارد پایتون (بدون وابسته خارجی) ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 def get_password_hash(password: str) -> str:
@@ -117,6 +118,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
     return user
 
+# تابع ارسال پیام به تلگرام مدیر
+def send_admin_notification(message_text: str):
+    if not BOT_TOKEN or not ADMIN_CHAT_ID:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": ADMIN_CHAT_ID,
+            "text": message_text,
+            "parse_mode": "HTML"
+        }
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"خطا در ارسال پیام به مدیر: {e}")
+
 # --- مدل‌های Pydantic ---
 class RegisterRequest(BaseModel):
     username: str
@@ -140,7 +156,6 @@ class CadastreRequest(BaseModel):
 # --- ساخت برنامه FastAPI ---
 app = FastAPI(title="Cadastre API Engine with Auth")
 
-# اصلاح لایه CORS برای جلوگیری از بلاک شدن Preflight در مرورگر
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -226,10 +241,7 @@ def calculate_area_and_centroid(df: pd.DataFrame, zone: int = 39):
     transformer = Transformer.from_crs(f"epsg:326{zone}", "epsg:4326")
     lat, lon = transformer.transform(cx, cy)
     
-    # ❌ خط قبلی:
-    # return cx, cy, lat, lon, abs_area
-
-    # ✅ خط جدید و اصلاح شده:
+    # خروجی‌ها کاملاً به float پایتون تبدیل می‌شوند
     return float(cx), float(cy), float(lat), float(lon), float(abs_area)
 
 def copy_style(source_cell, target_cell):
@@ -261,6 +273,8 @@ def get_neighbor_text(p1: int, ranges_list: list) -> str:
     return "---"
 
 def send_file_to_telegram(chat_id: int, file_bytes: bytes, filename: str):
+    if not BOT_TOKEN:
+        return
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
     files = {'document': (filename, file_bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
     data = {'chat_id': chat_id}
@@ -285,6 +299,16 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
+
+        # ارسال اعلان ثبت نام کاربر جدید به مدیر
+        admin_msg = (
+            f"👤 <b>ثبت‌نام کاربر جدید در سامانه!</b>\n\n"
+            f"🔹 نام کاربری: <code>{new_user.username}</code>\n"
+            f"🔹 نام و خانوادگی: {new_user.full_name or 'ثبت نشده'}\n"
+            f"📅 تاریخ: {new_user.created_at.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        send_admin_notification(admin_msg)
+
         return {"success": True, "message": "ثبت نام با موفقیت انجام شد."}
     except HTTPException as he:
         raise he
@@ -317,6 +341,9 @@ async def process_cadastre(
         df = reorder_polygon_clockwise_from_north(df_raw)
         num_points = len(df)
         cx, cy, lat, lon, total_area = calculate_area_and_centroid(df, req.zone)
+
+        # تبدیل قطعی متغیر numpy به float خالص پایتون
+        total_area_val = float(np.asarray(total_area).item()) if hasattr(total_area, 'item') else float(total_area)
 
         # ۲. پردازش اکسل ۱
         wb1 = load_workbook("temp1.xlsx")
@@ -352,7 +379,7 @@ async def process_cadastre(
         
         safe_write(ws2, 2, 3, req.applicant_name) 
         safe_write(ws2, 3, 3, req.national_id)    
-        safe_write(ws2, 5, 3, round(total_area, 2)) 
+        safe_write(ws2, 5, 3, round(total_area_val, 2)) 
         safe_write(ws2, 6, 3, req.building_area)  
         safe_write(ws2, 8, 3, req.zone)           
         safe_write(ws2, 9, 3, num_points)     
@@ -380,19 +407,35 @@ async def process_cadastre(
         wb2.save(output2)
         bytes2 = output2.getvalue()
 
-        # ✅ اصلاح ساخت رکورد در دیتابیس:
-        cert_record = CertificateDB(
-            user_id=current_user.id,
-            applicant_name=req.applicant_name,
-            national_id=req.national_id,
-            total_area=float(total_area),  # کست به float پایتون
-            zone=int(req.zone),
-            coords_text=req.coords_text
-        )
-        db.add(cert_record)
-        db.commit()
+        # ۴. ذخیره لاگ در دیتابیس به صورت کاملاً ایزوله (حتی اگر دیتابیس ارور دهد، خروجی اکسل کاربر متوقف نمی‌شود)
+        try:
+            cert_record = CertificateDB(
+                user_id=current_user.id,
+                applicant_name=req.applicant_name,
+                national_id=req.national_id,
+                total_area=total_area_val,
+                zone=int(req.zone),
+                coords_text=req.coords_text
+            )
+            db.add(cert_record)
+            db.commit()
+        except Exception as db_err:
+            print(f"⚠️ اشکال غیربحرانی دیتابیس (خروجی متوقف نشد): {db_err}")
+            db.rollback()
 
-        # ۵. بازگرداندن پاسخ
+        # ۵. ارسال اعلان صدور نقشه به مدیر
+        admin_msg = (
+            f"📜 <b>صدور گواهی کاداستر جدید!</b>\n\n"
+            f"👤 صادرکننده: <code>{current_user.username}</code> ({current_user.full_name or '---'})\n"
+            f"👨‍💼 متقاضی: <b>{req.applicant_name}</b>\n"
+            f"🪪 کد ملی: <code>{req.national_id}</code>\n"
+            f"📐 مساحت کل: <b>{total_area_val:,.2f} متر مربع</b>\n"
+            f"🌍 زون UTM: {req.zone}\n"
+            f"📍 تعداد رئوس: {num_points}"
+        )
+        send_admin_notification(admin_msg)
+
+        # ۶. تحویل فایل‌ها به کاربر
         filename1 = f"Gvahi_Azla_{req.applicant_name}.xlsx"
         filename2 = f"ParcelMap_{req.applicant_name}.xlsx"
 
