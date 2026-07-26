@@ -258,6 +258,7 @@ def send_file_to_telegram(chat_id: int, file_bytes: bytes, filename: str):
 # --- مسیرهای API (Endpoints) ---
 
 @app.get("/")
+@app.head("/")
 async def root():
     return {"status": "online", "message": "سامانه کاداستر همراه با دیتابیس و احراز هویت فعال است."}
 
