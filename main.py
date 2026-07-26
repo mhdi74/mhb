@@ -38,7 +38,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # اعتبار توکن: ۷ روز
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
-
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 # --- تنظیمات SQLAlchemy و دیتابیس ---
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
