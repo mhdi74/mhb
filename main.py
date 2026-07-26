@@ -28,7 +28,6 @@ from jose import JWTError, jwt
 
 # --- تنظیمات متغیرهای محیطی ---
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/postgres")
-# اصلاح پروتکل برای SQLAlchemy در صورت استفاده از postgres:// به جای postgresql://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -134,10 +133,11 @@ class CadastreRequest(BaseModel):
 # --- ساخت برنامه FastAPI ---
 app = FastAPI(title="Cadastre API Engine with Auth")
 
+# اصلاح لایه CORS برای جلوگیری از بلاک شدن Preflight در مرورگر
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -264,25 +264,35 @@ async def root():
 
 @app.post("/register")
 async def register(req: RegisterRequest, db: Session = Depends(get_db)):
-    existing_user = db.query(UserDB).filter(UserDB.username == req.username).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="این نام کاربری قبلاً ثبت شده است.")
-    
-    hashed_pwd = get_password_hash(req.password)
-    new_user = UserDB(username=req.username, password_hash=hashed_pwd, full_name=req.full_name)
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return {"success": True, "message": "ثبت نام با موفقیت انجام شد."}
+    try:
+        existing_user = db.query(UserDB).filter(UserDB.username == req.username).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="این نام کاربری قبلاً ثبت شده است.")
+        
+        hashed_pwd = get_password_hash(req.password)
+        new_user = UserDB(username=req.username, password_hash=hashed_pwd, full_name=req.full_name)
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        return {"success": True, "message": "ثبت نام با موفقیت انجام شد."}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"خطای داخلی سرور: {str(e)}")
 
 @app.post("/login")
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(UserDB).filter(UserDB.username == req.username).first()
-    if not user or not verify_password(req.password, user.password_hash):
-        raise HTTPException(status_code=400, detail="نام کاربری یا رمز عبور اشتباه است.")
-    
-    access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+    try:
+        user = db.query(UserDB).filter(UserDB.username == req.username).first()
+        if not user or not verify_password(req.password, user.password_hash):
+            raise HTTPException(status_code=400, detail="نام کاربری یا رمز عبور اشتباه است.")
+        
+        access_token = create_access_token(data={"sub": user.username})
+        return {"access_token": access_token, "token_type": "bearer"}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"خطای داخلی سرور: {str(e)}")
 
 @app.post("/process")
 async def process_cadastre(
