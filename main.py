@@ -67,18 +67,20 @@ class CertificateDB(Base):
 # ساخت اتوماتیک جداول در دیتابیس
 Base.metadata.create_all(bind=engine)
 
-# ❌ خط قبلی:
-# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# ✅ خط جدید و بدون باگ:
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+def get_password_hash(password: str) -> str:
+    salt = secrets.token_hex(16)
+    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000).hex()
+    return f"{salt}${pwd_hash}"
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        salt, stored_hash = hashed_password.split('$')
+        pwd_hash = hashlib.pbkdf2_hmac('sha256', plain_password.encode('utf-8'), salt.encode('utf-8'), 100000).hex()
+        return secrets.compare_digest(pwd_hash, stored_hash)
+    except Exception:
+        return False
 
 def create_access_token(data: dict):
     to_encode = data.copy()
