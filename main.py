@@ -66,8 +66,11 @@ class CertificateDB(Base):
 # ساخت اتوماتیک جداول در دیتابیس
 Base.metadata.create_all(bind=engine)
 
-# --- تنظیمات امنیت و هشینگ ---
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# ❌ خط قبلی:
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ✅ خط جدید و بدون باگ:
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 def verify_password(plain_password, hashed_password):
